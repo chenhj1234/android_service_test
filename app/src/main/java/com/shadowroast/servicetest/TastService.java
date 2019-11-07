@@ -1,8 +1,16 @@
 package com.shadowroast.servicetest;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.graphics.PixelFormat;
+import android.hardware.Camera;
+import android.hardware.Camera.Size;
 import android.media.MediaPlayer;
+import android.media.MediaRecorder;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -10,7 +18,14 @@ import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
 import android.util.Log;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.widget.Toast;
+
+import androidx.core.app.NotificationCompat;
+
+import java.io.IOException;
+import java.util.List;
 
 public class TastService extends Service {
     final String TAG = getClass().getSimpleName();
@@ -22,6 +37,12 @@ public class TastService extends Service {
         public TastService getService() {
             return  TastService.this;
         }
+        public IBinder getMsgBinder() {
+            if(mMessenger != null) {
+                return mMessenger.getBinder();
+            }
+            return null;
+        }
         public void binder_action() {
             Log.e(TAG, "binder_action");
         }
@@ -30,14 +51,14 @@ public class TastService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         Log.e(TAG, "onBind");
-        return mMessenger.getBinder();
+//        return mMessenger.getBinder();
+        return mBinder;
     }
     private MediaPlayer mp;
     @Override
     public void onCreate() {
         super.onCreate();
         Log.e(TAG, "onCreate");
-        handler.postDelayed(runnable, 2000);
 //        mp = new MediaPlayer();
     }
     @Override
@@ -51,6 +72,31 @@ public class TastService extends Service {
 //            mp.prepare();
 //            mp.start();
 //        }catch(Exception e){};
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0,
+                notificationIntent, 0);
+        NotificationCompat.Builder builder;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+
+            String CHANNEL_ID = "alex_channel";
+
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "AlexChannel",
+                    NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Alex channel description");
+            manager.createNotificationChannel(channel);
+
+            builder = new NotificationCompat.Builder(this, CHANNEL_ID);
+        }
+        else
+        {
+            builder = new NotificationCompat.Builder(this);
+        }
+        Notification notification = builder.setContentTitle("My Awesome App")
+                .setContentText("Doing some work...")
+                .setContentIntent(pendingIntent).build();
+        startForeground(1337, notification);
+        handler.postDelayed(runnable, 2000);
         return super.onStartCommand(intent, flags, startId);
     }
     @Override
@@ -109,19 +155,9 @@ public class TastService extends Service {
             Log.i(TAG, "mHandler Thread ="+Thread.currentThread());
             switch (msg.what) {
                 case MSG_SAY_HELLO:
-                    Toast.makeText(getApplicationContext(), "hello,remote service", Toast.LENGTH_SHORT).show();
-                    //通过message对象获取客户端传递过来的Messenger对象。
+                    Log.e(TAG, "hello,remote service");
                     mActivityMessenger = msg.replyTo;
                     sendMessageToActivity(MSG_SAY_HELLO);
-//                    if(mActivityMessenger != null){
-//                        Message messg = Message.obtain(null, MSG_SAY_HELLO);
-//                        try {
-//                            //向客户端发送消息
-//                            mActivityMessenger.send(messg);
-//                        } catch (RemoteException e) {
-//                            e.printStackTrace();
-//                        }
-//                    }
                     break;
                 case MSG_MUSIC_PLAY:
                     //播放音乐
@@ -132,9 +168,81 @@ public class TastService extends Service {
                     stopPlay();
                     break;
                 default:
+                    Log.e(TAG, "Receive message " + msg.what + " , response " + (msg.what + 1));
+                    mActivityMessenger = msg.replyTo;
+                    sendMessageToActivity(msg.what + 1);
                     break;
             }
         }
     };
     Messenger mMessenger = new Messenger(mHandler);
+
+    MediaRecorder mMediaRecorder = null;
+    Camera mServiceCamera = null;
+    SurfaceHolder mSurfaceHolder = null;
+    boolean mRecordingStatus = false;
+    public boolean starMediaRecording(){
+        mServiceCamera = Camera.open(1);
+        Camera.Parameters params = mServiceCamera.getParameters();
+        mServiceCamera.setParameters(params);
+        Camera.Parameters p = mServiceCamera.getParameters();
+
+        final List<Size> listSize = p.getSupportedPreviewSizes();
+        Size mPreviewSize = listSize.get(2);
+        p.setPreviewSize(mPreviewSize.width, mPreviewSize.height);
+        p.setPreviewFormat(PixelFormat.YCbCr_420_SP);
+        mServiceCamera.setParameters(p);
+        SurfaceView sv = new SurfaceView(this);
+        mSurfaceHolder = sv.getHolder();
+
+        try {
+            mServiceCamera.setPreviewDisplay(mSurfaceHolder);
+            mServiceCamera.startPreview();
+        }
+        catch (IOException e) {
+            Log.e(TAG, e.getMessage());
+            e.printStackTrace();
+        }
+
+        mServiceCamera.unlock();
+
+        mMediaRecorder = new MediaRecorder();
+        mMediaRecorder.setCamera(mServiceCamera);
+        mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.CAMERA);
+        mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.DEFAULT);
+        mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT);
+        mMediaRecorder.setOutputFile("/sdcard/filenamevideo.mp4");
+        mMediaRecorder.setVideoFrameRate(30);
+        mMediaRecorder.setVideoSize(mPreviewSize.width, mPreviewSize.height);
+        mMediaRecorder.setPreviewDisplay(mSurfaceHolder.getSurface());
+        try {
+            mMediaRecorder.prepare();
+            mMediaRecorder.start();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        mRecordingStatus = true;
+
+        return true;
+
+    }
+
+    public void stopMediaRecorder() {
+        try {
+            mServiceCamera.reconnect();
+
+            mMediaRecorder.stop();
+            mMediaRecorder.reset();
+
+            mServiceCamera.stopPreview();
+            mMediaRecorder.release();
+
+            mServiceCamera.release();
+            mServiceCamera = null;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 }
